@@ -6,7 +6,7 @@ output:
 ---
 
 ```{r setoptions, echo = FALSE}
-knitr::opts_chunk$set (echo = TRUE)
+knitr::opts_chunk$set (echo = TRUE, fig.align = "center")
 ```
 
 ## Loading and preprocessing the data
@@ -14,18 +14,20 @@ knitr::opts_chunk$set (echo = TRUE)
 First at all we need to unzip the activity.zip file and load the data:
 
 ```{r loading}
-unzip ("activity.zip")
+if (!file.exists("activity.csv"))
+  unzip ("activity.zip")
 dataset <- read.csv ("activity.csv")
 ```
 
-Now we change the date format from a factor to a date class in R with the *lubridate* package, and we convert the interval code to minuts (all of this with the *dplyr* package to make an easy-to-read code):
+Now we take only the entries of the dataset where there are no missing values, we change the date format from a factor to a date class in R with the *lubridate* package, and we convert the interval code to minuts (all of this with the *dplyr* package to make an easy-to-read code):
 
 ```{r preprocessing, message=FALSE}
 library (lubridate)
 library (dplyr)
-dataset <- mutate (dataset,
-                   date = ymd (date),
-                   interval = floor (interval / 100) * 60 + interval %% 100)
+clean_dataset <- dataset %>%
+                 filter (complete.cases (dataset)) %>%
+                 mutate (date = ymd (date),
+                         interval = floor (interval / 100) * 60 + interval %% 100)
 ```
 
 ## What is mean total number of steps taken per day?
@@ -33,15 +35,15 @@ dataset <- mutate (dataset,
 To calculate the total number of steps taken per day we group the data by the date column:
 
 ```{r steps_per_day}
-steps_per_day <- dataset %>%
+steps_per_day <- clean_dataset %>%
                  group_by (date) %>%
-                 summarize(total = sum (steps, na.rm = TRUE))
+                 summarize(total = sum (steps))
 ```
 
 This is shown in the next histogram:
 
 ```{r histogram}
-plot (steps_per_day, type = "h", main = "Number of steps taken per day")
+plot (steps_per_day, type = "h", main = "Number of steps taken per day", lwd = 7)
 ```
 
 Finally, to calculate both the mean and the median of the total number of steps taken per day, we use the corresponding functions:
@@ -58,13 +60,16 @@ So there is a mean of `r mean_steps` steps per day, with a median of `r median_s
 The next plot show us the average steps taken by every 5-minute interval in a day:
 
 ```{r average_steps_interval}
-average_interval <- dataset %>%
+average_interval <- clean_dataset %>%
                     group_by (interval) %>%
-                    summarize(average = mean (steps, na.rm = TRUE))
+                    summarize(average = mean (steps))
 with (average_interval,
-      plot (interval, average, type = "l", col = "red",
-            xlab = "Interval (minuts)", ylab = "Average steps",
-            main = "Average steps per 5-minute interval of a day"))
+      plot (interval, average, type = "l", col = "red", xaxt = "n",
+            xlab = "Interval", ylab = "Average steps",
+            main = "Average steps per 5-minute intervals of a day"))
+positions <- seq (0, 1440, 180)
+labs <- paste0 (seq (0, 24, 3), ":00h")
+axis(1, positions, labels = labs, cex.axis = 0.9)
 ```
 
 We can see from the last graphic that the maximum average number of steps by 5-minute interval is, more or less, on minute 500 (08:20h). But to be more accurate:
@@ -82,24 +87,19 @@ First at all, we can see how many missing values the data contain on the followi
 
 ```{r number_NA, results = 'asis'}
 library (xtable)
-NA_count <- as.integer (colSums (is.na (dataset)))
-NA_table <- data.frame ()
-NA_table <- rbind (NA_table, NA_count)
-names (NA_table) <- names (dataset)
-row.names (NA_table) <- "Total NA"
+NA_table <- data.frame(Total_NA = colSums (is.na (dataset)))
 print (xtable (NA_table), type = "html")
 ```
 
-In order to input missing values, we are going to use the average number of steps in every 5-minute interval (recall that the interval column of the "dataset" data frame is the same as the first column of "average_interval" data frame, but repeated, so that's why we can use the module operator **%%**):
+In order to input missing values, we are going to use the average number of steps in every 5-minute interval (recall that the interval column of the "dataset" data frame is the same as the first column of "average_interval" data frame, but repeated):
 
 ```{r inputing_NA}
-full_dataset <- dataset
-for (i in 1:nrow (full_dataset))
-  if (is.na (full_dataset$steps [i]))
-  {
-    index <- (i-1) %% nrow (average_interval) + 1
-    full_dataset$steps [i] <- round (average_interval$average [index], digits = 0)
-  }
+full_dataset <- dataset %>%
+                 mutate (date = ymd (date),
+                         interval = floor (interval / 100) * 60 + interval %% 100)
+means_vector <- rep (as.integer (average_interval$average),
+                     times = nrow (full_dataset) / nrow (average_interval))
+full_dataset$steps[is.na(full_dataset$steps)] <- means_vector[is.na(full_dataset$steps)]
 ```
 
 We are going to see now how the histogram plotted above changes with the missing values filled in:
@@ -107,11 +107,11 @@ We are going to see now how the histogram plotted above changes with the missing
 ```{r histogram_without_NA}
 full_steps_per_day <- full_dataset %>%
                       group_by (date) %>%
-                      summarize(total = sum (steps, na.rm = TRUE))
-plot (full_steps_per_day, type = "h", main = "Number of steps taken per day")
+                      summarize(total = sum (steps))
+plot (full_steps_per_day, type = "h", main = "Number of steps taken per day", lwd = 7)
 ```
 
-We can see that some days that had no steps registered, now have, but in general, the shape of the histogram doesn't change so much.
+We can see that some days that had no steps registered now have, but in general, the shape of the histogram doesn't change so much.
 
 And for the mean and the median of the total number of steps taken per day:
 
@@ -120,7 +120,7 @@ full_mean_steps <- mean (full_steps_per_day$total)
 full_median_steps <- median (full_steps_per_day$total)
 ```
 
-This is, now the mean is `r full_mean_steps` steps per day, and the median is `r full_median_steps` steps per day. Both numbers have increased after inputting missing values. This is not strange: now the total steps per day is equal to the total steps per day before inputting missing values plus all the numbers we have added instead of missing values.
+This is, now the mean is `r full_mean_steps` steps per day, and the median is `r full_median_steps` steps per day. Both values are practically the same as we calculated without filling the missing data.
 
 ## Are there differences in activity patterns between weekdays and weekends?
 
@@ -138,8 +138,11 @@ Finally, the next graphic show us a comparison between the average number of ste
 ```{r comparison}
 full_average_interval <- full_dataset %>%
                          group_by (type_day, interval) %>%
-                         summarize(average = mean (steps, na.rm = TRUE))
+                         summarize(average = mean (steps))
 library (ggplot2)
 ggplot (full_average_interval, aes (interval, average)) +
-  geom_line (col="red") + facet_grid (type_day ~ .)
+  geom_line (col="red") + facet_grid (type_day ~ .) +
+  scale_x_continuous(breaks = positions, labels = labs) +
+  labs (x = "Interval", y = "Average",
+        title = "Average steps per 5-minute intervals of a day")
 ```
